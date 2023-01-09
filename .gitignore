@@ -1,0 +1,8 @@
+# Ignore Mac system files
+*.DS_store
+*ipynb_checkpoints
+
+# Ignore reviewed projects
+*reviewed.ipynb
+*datasets
+CV/
