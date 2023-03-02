@@ -272,8 +272,9 @@ def save_model(model, epoch, save_path, model_name, eval_f1, last=False, ):
         Path(save_path).mkdir()
 
     timestamp = datetime.now().strftime('%Y%m%d_%H_%M')
-    filename = f"{save_path}/{model_name}_{timestamp}_{epoch}_{eval_f1}best.pth"
+    filename = f"{save_path}/{model_name}_{timestamp}_{epoch}_{eval_f1}_best.pth"
     if last:
-        filename = f"{save_path}/{model_name}_{timestamp}_ep{epoch+1}_{eval_f1}_last.pth"
+        #filename = f"{save_path}/{model_name}_{timestamp}_ep{epoch+1}_{eval_f1}_last.pth"
+        filename.replace('best', 'last')
     torch.save(model.state_dict(), filename)
     print(f">>> model saved to {filename}")
