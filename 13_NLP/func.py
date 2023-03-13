@@ -1,4 +1,6 @@
 import pickle
+
+import transformers
 from tqdm.notebook import tqdm
 # from tqdm import tqdm
 from pathlib import Path
@@ -20,7 +22,8 @@ def make_tokens(tokenizer,
                 tokenized_filepath: str,
                 max_length: int,
                 force=False,
-                fraq=1
+                fraq=1,
+                df_column='text'
                 ):
     """Tokenize all of the sentences and map th e tokens to thier word IDs.
     reutrns input_ids, attention_masks, labels
@@ -44,7 +47,7 @@ def make_tokens(tokenizer,
                    'token_type_ids': [],
                    'labels': df.toxic.to_list()
                    }
-    sentences = df.text.values
+    sentences = df[df_column].values
 
     if not (Path(tokenized_filepath).exists() and os.path.getsize(tokenized_filepath) > 0) or force or (fraq < 1):
 
@@ -127,9 +130,9 @@ def fit_epoch(train_loader, model, device, optimizer, use_wandb, log_interval):
         #                      )
 
         outputs = model(ids=input_ids,
-                       mask=input_mask,
-                       token_type_ids=type_ids
-                       )
+                        mask=input_mask,
+                        token_type_ids=type_ids
+                        )
         preds = torch.argmax(outputs, 1).cpu().tolist()
         train_epoch_true.extend(labels.cpu().tolist())
         train_epoch_preds.extend(preds)
@@ -145,11 +148,13 @@ def fit_epoch(train_loader, model, device, optimizer, use_wandb, log_interval):
     return train_epoch_loss, train_epoch_true, train_epoch_preds
 
 
-def eval_epoch(valid_loader, model, device):
+def eval_epoch(valid_loader, model, device, show_FP=False):
     model.eval()
     eval_epoch_loss = []
     eval_epoch_true = []
     eval_epoch_preds = []
+
+
 
     for step, batch in enumerate(tqdm(valid_loader, desc='valid', position=0, leave=True)):
         input_ids = batch[0].to(device)
@@ -157,7 +162,7 @@ def eval_epoch(valid_loader, model, device):
         token_type_ids = batch[2].to(device)
         labels = batch[3].to(device)
         # labels = batch[2].to(device)
-
+        fp_decoded = []
         with torch.no_grad():
             # loss, outputs = model(input_ids=input_ids,
             #                      attention_mask=input_mask,
@@ -170,10 +175,52 @@ def eval_epoch(valid_loader, model, device):
         # eval_epoch_loss.append(loss.item())
         eval_epoch_loss.append(loss.item())
         preds = torch.argmax(outputs, 1).cpu().tolist()
+        if show_FP and preds != labels:
+            tokenizer = transformers.AutoTokenizer.from_pretrained('bert-base-uncased')
+            fp = [1 if (i != j and i == 1) else 0 for i,j in zip(labels, preds)]
+            fp_ids = np.argwhere(fp).tolist()
+            for i in fp_ids:
+                fp_decoded.append(tokenizer.decode(*input_ids[i], skip_special_tokens=True))
+        if len(fp_decoded) > 0:
+            print('='*40)
+            print(f"false toxic sentences:")
+            [print(sentence) for sentence in fp_decoded]
+            print('='*40)
         eval_epoch_true.extend(labels.cpu().tolist())
         eval_epoch_preds.extend(preds)
 
     return eval_epoch_loss, eval_epoch_true, eval_epoch_preds
+
+
+def predict_one_sample(corpus, model):
+    from transformers import AutoTokenizer
+    from torch.utils.data import TensorDataset
+    from torch.utils.data import DataLoader
+    tokenized_dict = {'input_ids': [],
+                      'attention_mask': [],
+                      'token_type_ids': []}
+    preds = []
+    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+
+    for sent in corpus:
+        encoded = tokenizer.encode_plus(
+            sent,  # Sentence to encode.
+            add_special_tokens=True,  # Add '[CLS]' and '[SEP]'
+            max_length=200,
+            padding="max_length",  # Pad & truncate all sentences.
+            truncation=True,
+            return_attention_mask=True,  # Construct attn. masks.
+            return_tensors='pt',  # Return pytorch tensors.
+            # Only for BERT finetuning
+            return_token_type_ids=True
+        )
+
+        with torch.no_grad():
+            outputs = model(ids=encoded['input_ids'],
+                            mask=encoded['attention_mask'],
+                            token_type_ids=encoded['token_type_ids'])
+            preds.append(torch.argmax(outputs, 1).cpu().tolist())
+    return preds
 
 
 def loss_fn(outputs, targets):
@@ -194,7 +241,6 @@ def train_loop(
         run_name=None,
         model_name=None
 ):
-
     # variables for calculate metrics
     train_loss = []
     train_true = []
@@ -274,7 +320,7 @@ def save_model(model, epoch, save_path, model_name, eval_f1, last=False, ):
     timestamp = datetime.now().strftime('%Y%m%d_%H_%M')
     filename = f"{save_path}/{model_name}_{timestamp}_{epoch}_{eval_f1}_best.pth"
     if last:
-        #filename = f"{save_path}/{model_name}_{timestamp}_ep{epoch+1}_{eval_f1}_last.pth"
+        # filename = f"{save_path}/{model_name}_{timestamp}_ep{epoch+1}_{eval_f1}_last.pth"
         filename.replace('best', 'last')
     torch.save(model.state_dict(), filename)
     print(f">>> model saved to {filename}")
